@@ -1,5 +1,7 @@
 # vite-plugin-llm-spider
 
+> **Built by [Happy Alien AI](https://happyalien.ai)** — AI-powered tools for eLearning creators.
+
 A Vite build plugin that generates **LLM-friendly Markdown snapshots** of selected public routes and publishes a curated index at **`/llms.txt`**.
 
 Makes SPAs and content-heavy Vite apps easier for AI agents/tools to understand by providing clean, low-noise text renditions plus a deterministic index.
@@ -211,3 +213,13 @@ render: {
 ## License
 
 MIT
+
+---
+
+<p align="center">
+  <a href="https://happyalien.ai">
+    <strong>Happy Alien AI</strong>
+  </a>
+  <br>
+  AI-powered tools for instructional designers and eLearning teams
+</p>

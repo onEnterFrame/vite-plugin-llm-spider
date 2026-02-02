@@ -36,7 +36,10 @@
     "spider",
     "crawler"
   ],
-  "author": "Happy Alien AI",
+  "author": {
+    "name": "Happy Alien AI",
+    "url": "https://happyalien.ai"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
