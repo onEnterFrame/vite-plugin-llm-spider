@@ -4,7 +4,15 @@ import path from "node:path";
 import * as cheerio from "cheerio";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
-import puppeteer from "puppeteer";
+
+// Lazy-load puppeteer only when needed
+let puppeteer = null;
+async function loadPuppeteer() {
+  if (!puppeteer) {
+    puppeteer = await import("puppeteer");
+  }
+  return puppeteer.default || puppeteer;
+}
 
 /**
  * @typedef {{ path: string, title?: string, section?: string, optional?: boolean, notes?: string }} RouteDef
@@ -34,6 +42,12 @@ export default function llmSpiderPlugin(userOptions = {}) {
 
   const defaults = {
     enabled: true,
+
+    // Static mode: read HTML files directly from dist/ without browser
+    // - true: always use static mode (no Puppeteer)
+    // - false: always use browser rendering
+    // - "auto" (default): use static when crawl is disabled, browser when crawl is enabled
+    static: "auto",
 
     // Recommended: explicit list
     routes: /** @type {RouteDef[] | undefined} */ (undefined),
@@ -197,6 +211,14 @@ export default function llmSpiderPlugin(userOptions = {}) {
     return path.join(distDir, rel);
   }
 
+  /** Convert a route to its expected HTML file path in dist */
+  function routeToHtmlFsPath(distDir, route) {
+    if (route === "/") return path.join(distDir, "index.html");
+    if (route.endsWith("/")) return path.join(distDir, route.slice(1), "index.html");
+    // Try both /route.html and /route/index.html
+    return path.join(distDir, route.slice(1) + ".html");
+  }
+
   function makeLlmsLink(relMdPath) {
     // Use relative links (no leading slash) so it works in subpath deployments.
     // If subdir mode: links should include "ai/..."
@@ -207,6 +229,14 @@ export default function llmSpiderPlugin(userOptions = {}) {
     await new Promise((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
+  }
+
+  /** Determine if we should use static mode */
+  function shouldUseStaticMode() {
+    if (options.static === true) return true;
+    if (options.static === false) return false;
+    // "auto" mode: use static when crawl is disabled
+    return !options.crawl?.enabled;
   }
 
   return {
@@ -224,6 +254,7 @@ export default function llmSpiderPlugin(userOptions = {}) {
 
       const distDir = resolvedConfig.build.outDir || "dist";
       const basePath = (resolvedConfig.base || "/").replace(/\\/g, "/");
+      const useStaticMode = shouldUseStaticMode();
 
       // ---- Resolve route list ----
       /** @type {RouteDef[]} */
@@ -245,140 +276,57 @@ export default function llmSpiderPlugin(userOptions = {}) {
         routeDefs = [{ path: "/", section: "Pages" }];
       }
 
-      log.info("\nLLM Spider: generating markdown + llms.txt");
+      log.info(`\nLLM Spider: generating markdown + llms.txt (${useStaticMode ? 'static' : 'browser'} mode)`);
       log.debug("distDir:", distDir, "base:", basePath);
 
-      // ---- Start preview server for built output ----
-      // Vite preview API returns a PreviewServer with httpServer + resolvedUrls.
-      const previewServer = await preview({
-        root: resolvedConfig.root,
-        base: resolvedConfig.base,
-        build: { outDir: distDir },
-        preview: { port: 0, open: false, host: '127.0.0.1' },
-        configFile: false,
-        plugins: [], // avoid loading user plugins again
-        logLevel: "silent",
-      });
-
-      // Wait for server to be fully listening
-      await new Promise((resolve, reject) => {
-        const server = previewServer.httpServer;
-        if (server.listening) {
-          resolve();
-        } else {
-          server.once('listening', resolve);
-          server.once('error', reject);
-          // Timeout after 5s
-          setTimeout(() => reject(new Error('Preview server failed to start')), 5000);
-        }
-      });
-
-      const addr = previewServer.httpServer.address();
-      if (!addr || typeof addr === "string") {
-        await safeCloseHttpServer(previewServer.httpServer);
-        throw new Error("LLM Spider: could not determine preview server port");
-      }
-
-      // Build a base URL that respects Vite's base path
-      // Example: http://127.0.0.1:4173/app/  (if base="/app/")
-      const normalizedBase = basePath.endsWith("/") ? basePath : basePath + "/";
-      const baseUrl = `http://127.0.0.1:${addr.port}${normalizedBase}`;
-      
-      log.debug("Preview server at:", baseUrl);
-
-      const browser = await puppeteer.launch(options.render.launchOptions);
       const turndown = new TurndownService(options.markdown.turndown);
       turndown.use(gfm);
-
-      /** @type {Set<string>} */
-      const visited = new Set();
 
       /** @type {{ route: string, title?: string, section: string, optional: boolean, notes?: string, mdRelPath: string }[]} */
       const captured = [];
 
-      // Crawl queue stores base-relative routes (no base prefix)
-      /** @type {{ route: string, depth: number }[]} */
-      const queue = [];
+      // ============================================
+      // STATIC MODE: Read HTML files directly
+      // ============================================
+      if (useStaticMode) {
+        log.debug("Using static mode - reading HTML files directly from dist/");
 
-      // Seed queue
-      if (options.crawl?.enabled) {
-        for (const seed of options.crawl.seeds || ["/"]) {
-          const nr = normalizeRoute(seed, {
-            stripQuery: options.crawl.stripQuery,
-          });
-          if (nr) queue.push({ route: nr, depth: 0 });
-        }
-      } else {
-        for (const rd of routeDefs) queue.push({ route: rd.path, depth: 0 });
-      }
+        for (const rd of routeDefs) {
+          const route = rd.path;
+          if (isExcluded(route)) continue;
 
-      const maxDepth = options.crawl?.enabled ? options.crawl.maxDepth : 0;
-      const maxPages = options.crawl?.enabled
-        ? options.crawl.maxPages
-        : queue.length;
-      const concurrency = options.crawl?.enabled
-        ? options.crawl.concurrency
-        : 3;
+          // Try to find the HTML file
+          let htmlPath = routeToHtmlFsPath(distDir, route);
+          let htmlContent = null;
 
-      async function captureOne(route) {
-        if (visited.has(route)) return;
-        if (isExcluded(route)) return;
-        if (captured.length >= maxPages) return;
-
-        visited.add(route);
-
-        const page = await browser.newPage();
-
-        // Request blocking (best effort)
-        if (options.render.blockRequests?.length) {
-          await page.setRequestInterception(true);
-          page.on("request", (req) => {
-            const url = req.url();
-            const blocked = options.render.blockRequests.some((p) =>
-              p instanceof RegExp ? p.test(url) : url.includes(p),
-            );
-            if (blocked) req.abort();
-            else req.continue();
-          });
-        }
-
-        try {
-          const pageUrl =
-            route === "/" ? baseUrl : baseUrl + route.replace(/^\//, "");
-          await options.render.beforeGoto(page, { route });
-
-          await page.goto(pageUrl, {
-            waitUntil: options.render.waitUntil,
-            timeout: options.render.timeoutMs,
-          });
-
-          if (options.render.waitForSelector) {
-            await page.waitForSelector(options.render.waitForSelector, {
-              timeout: options.render.timeoutMs,
-            });
+          try {
+            htmlContent = await fs.readFile(htmlPath, "utf8");
+          } catch {
+            // Try alternate path: /route/index.html
+            if (!route.endsWith("/") && route !== "/") {
+              const altPath = path.join(distDir, route.slice(1), "index.html");
+              try {
+                htmlContent = await fs.readFile(altPath, "utf8");
+                htmlPath = altPath;
+              } catch {
+                // Fall back to SPA: all routes serve index.html
+                try {
+                  htmlContent = await fs.readFile(path.join(distDir, "index.html"), "utf8");
+                  htmlPath = path.join(distDir, "index.html");
+                  log.debug(`  Using SPA fallback index.html for ${route}`);
+                } catch {
+                  log.warn(`  ⚠️  No HTML found for ${route}`);
+                  continue;
+                }
+              }
+            }
           }
 
-          if (options.render.postLoadDelayMs > 0) {
-            await new Promise((r) =>
-              setTimeout(r, options.render.postLoadDelayMs),
-            );
-          }
+          if (!htmlContent) continue;
 
-          await options.render.beforeExtract(page, { route });
+          const $ = cheerio.load(htmlContent);
 
-          const html = await page.content();
-          const $ = cheerio.load(html);
-
-          // Harvest links BEFORE removing nav elements (for crawl mode)
-          let harvestedHrefs = [];
-          if (options.crawl?.enabled) {
-            harvestedHrefs = $("a[href]")
-              .map((_, a) => $(a).attr("href"))
-              .get();
-            log.debug(`  Found ${harvestedHrefs.length} links on ${route}:`, harvestedHrefs.slice(0, 15));
-          }
-
-          // Remove noisy elements (CSS selectors)
+          // Remove noisy elements
           for (const sel of options.extract.removeSelectors || [])
             $(sel).remove();
 
@@ -421,139 +369,312 @@ export default function llmSpiderPlugin(userOptions = {}) {
 
           await fs.writeFile(fsPath, frontmatter + markdownBody, "utf8");
 
-          // Map metadata
-          const meta = routeDefs.find((r) => r.path === route);
           captured.push({
             route,
-            title: meta?.title || title,
-            section: meta?.section || "Pages",
-            optional: !!meta?.optional,
-            notes: meta?.notes,
+            title: rd.title || title,
+            section: rd.section || "Pages",
+            optional: !!rd.optional,
+            notes: rd.notes,
             mdRelPath,
           });
 
           log.info(`  ✅ ${route} -> ${mdRelPath}`);
+        }
+      }
+      // ============================================
+      // BROWSER MODE: Use Puppeteer for rendering
+      // ============================================
+      else {
+        // ---- Start preview server for built output ----
+        const previewServer = await preview({
+          root: resolvedConfig.root,
+          base: resolvedConfig.base,
+          build: { outDir: distDir },
+          preview: { port: 0, open: false, host: '127.0.0.1' },
+          configFile: false,
+          plugins: [],
+          logLevel: "silent",
+        });
 
-          // Harvest links (crawl mode only) - using pre-harvested links from before cleanup
-          if (options.crawl?.enabled) {
-            for (const href of harvestedHrefs) {
-              const n = normalizeRoute(href, {
-                stripQuery: options.crawl.stripQuery,
+        // Wait for server to be fully listening
+        await new Promise((resolve, reject) => {
+          const server = previewServer.httpServer;
+          if (server.listening) {
+            resolve();
+          } else {
+            server.once('listening', resolve);
+            server.once('error', reject);
+            setTimeout(() => reject(new Error('Preview server failed to start')), 5000);
+          }
+        });
+
+        const addr = previewServer.httpServer.address();
+        if (!addr || typeof addr === "string") {
+          await safeCloseHttpServer(previewServer.httpServer);
+          throw new Error("LLM Spider: could not determine preview server port");
+        }
+
+        const normalizedBase = basePath.endsWith("/") ? basePath : basePath + "/";
+        const baseUrl = `http://127.0.0.1:${addr.port}${normalizedBase}`;
+
+        log.debug("Preview server at:", baseUrl);
+
+        const pup = await loadPuppeteer();
+        const browser = await pup.launch(options.render.launchOptions);
+
+        /** @type {Set<string>} */
+        const visited = new Set();
+
+        // Crawl queue stores base-relative routes (no base prefix)
+        /** @type {{ route: string, depth: number }[]} */
+        const queue = [];
+
+        // Seed queue
+        if (options.crawl?.enabled) {
+          for (const seed of options.crawl.seeds || ["/"]) {
+            const nr = normalizeRoute(seed, {
+              stripQuery: options.crawl.stripQuery,
+            });
+            if (nr) queue.push({ route: nr, depth: 0 });
+          }
+        } else {
+          for (const rd of routeDefs) queue.push({ route: rd.path, depth: 0 });
+        }
+
+        const maxDepth = options.crawl?.enabled ? options.crawl.maxDepth : 0;
+        const maxPages = options.crawl?.enabled
+          ? options.crawl.maxPages
+          : queue.length;
+        const concurrency = options.crawl?.enabled
+          ? options.crawl.concurrency
+          : 3;
+
+        async function captureOne(route) {
+          if (visited.has(route)) return;
+          if (isExcluded(route)) return;
+          if (captured.length >= maxPages) return;
+
+          visited.add(route);
+
+          const page = await browser.newPage();
+
+          // Request blocking (best effort)
+          if (options.render.blockRequests?.length) {
+            await page.setRequestInterception(true);
+            page.on("request", (req) => {
+              const url = req.url();
+              const blocked = options.render.blockRequests.some((p) =>
+                p instanceof RegExp ? p.test(url) : url.includes(p),
+              );
+              if (blocked) req.abort();
+              else req.continue();
+            });
+          }
+
+          try {
+            const pageUrl =
+              route === "/" ? baseUrl : baseUrl + route.replace(/^\//, "");
+            await options.render.beforeGoto(page, { route });
+
+            await page.goto(pageUrl, {
+              waitUntil: options.render.waitUntil,
+              timeout: options.render.timeoutMs,
+            });
+
+            if (options.render.waitForSelector) {
+              await page.waitForSelector(options.render.waitForSelector, {
+                timeout: options.render.timeoutMs,
               });
-              if (!n) continue;
+            }
 
-              // If site is deployed under a base like "/app/", router-links usually include "/app/..."
-              // Strip base prefix when present so our internal route stays base-relative.
-              let baseRelative = n;
-              if (
-                normalizedBase !== "/" &&
-                baseRelative.startsWith(normalizedBase)
-              ) {
-                baseRelative = "/" + baseRelative.slice(normalizedBase.length);
-                baseRelative =
-                  baseRelative === "//"
-                    ? "/"
-                    : baseRelative.replace(/\/{2,}/g, "/");
-              }
+            if (options.render.postLoadDelayMs > 0) {
+              await new Promise((r) =>
+                setTimeout(r, options.render.postLoadDelayMs),
+              );
+            }
 
-              if (!visited.has(baseRelative) && !isExcluded(baseRelative)) {
-                // Depth tracking is handled by the outer loop (we store depth in queue entries)
-                // so just push; caller will attach depth.
-                queue.push({ route: baseRelative, depth: -1 }); // placeholder depth; will be overwritten
+            await options.render.beforeExtract(page, { route });
+
+            const html = await page.content();
+            const $ = cheerio.load(html);
+
+            // Harvest links BEFORE removing nav elements (for crawl mode)
+            let harvestedHrefs = [];
+            if (options.crawl?.enabled) {
+              harvestedHrefs = $("a[href]")
+                .map((_, a) => $(a).attr("href"))
+                .get();
+              log.debug(`  Found ${harvestedHrefs.length} links on ${route}:`, harvestedHrefs.slice(0, 15));
+            }
+
+            // Remove noisy elements (CSS selectors)
+            for (const sel of options.extract.removeSelectors || [])
+              $(sel).remove();
+
+            // Pick main content
+            const mainSelectors = Array.isArray(options.extract.mainSelector)
+              ? options.extract.mainSelector
+              : [options.extract.mainSelector];
+
+            let mainHtml = null;
+            for (const sel of mainSelectors) {
+              if (!sel) continue;
+              const node = $(sel).first();
+              if (node && node.length) {
+                mainHtml = node.html();
+                break;
               }
             }
-          }
-        } catch (err) {
-          log.warn(`  ⚠️  failed ${route}: ${err?.message || err}`);
-        } finally {
-          await page.close();
-        }
-      }
+            if (!mainHtml) {
+              const main = $("main").first();
+              mainHtml = main.length ? main.html() : $("body").html();
+            }
 
-      try {
-        // BFS: process queue in batches
-        while (queue.length && captured.length < maxPages) {
-          // Fix up crawl depths if needed
-          // If we're in crawl mode, queue items may have depth=-1 from harvested links.
-          // We'll conservatively treat them as depth=1 unless they were explicitly set.
-          const batch = queue.splice(0, concurrency).map((item) => {
-            const depth = item.depth >= 0 ? item.depth : 1;
-            return { route: item.route, depth };
-          });
+            const title = ($("title").text() || "").trim() || route;
 
-          await Promise.all(
-            batch.map(async ({ route, depth }) => {
-              if (options.crawl?.enabled && depth > maxDepth) return;
-              await captureOne(route);
+            // Convert to Markdown
+            const markdownBody = turndown.turndown(mainHtml || "");
 
-              // If crawl mode, increase depth for any newly harvested links
-              if (options.crawl?.enabled) {
-                // Patch any depth=-1 entries added during captureOne
-                for (let i = 0; i < queue.length; i++) {
-                  if (queue[i].depth === -1) queue[i].depth = depth + 1;
+            // Write file
+            const mdRelPath =
+              options.output.mode === "subdir"
+                ? path.posix.join(options.output.subdir, routeToMdWebPath(route))
+                : routeToMdWebPath(route);
+
+            const fsPath = routeToMdFsPath(distDir, route);
+            await fs.mkdir(path.dirname(fsPath), { recursive: true });
+
+            const frontmatter = options.markdown.addFrontmatter
+              ? `---\nsource: ${route}\ntitle: ${title}\ngenerated_at: ${new Date().toISOString()}\n---\n\n`
+              : "";
+
+            await fs.writeFile(fsPath, frontmatter + markdownBody, "utf8");
+
+            // Map metadata
+            const meta = routeDefs.find((r) => r.path === route);
+            captured.push({
+              route,
+              title: meta?.title || title,
+              section: meta?.section || "Pages",
+              optional: !!meta?.optional,
+              notes: meta?.notes,
+              mdRelPath,
+            });
+
+            log.info(`  ✅ ${route} -> ${mdRelPath}`);
+
+            // Harvest links (crawl mode only)
+            if (options.crawl?.enabled) {
+              for (const href of harvestedHrefs) {
+                const n = normalizeRoute(href, {
+                  stripQuery: options.crawl.stripQuery,
+                });
+                if (!n) continue;
+
+                let baseRelative = n;
+                if (
+                  normalizedBase !== "/" &&
+                  baseRelative.startsWith(normalizedBase)
+                ) {
+                  baseRelative = "/" + baseRelative.slice(normalizedBase.length);
+                  baseRelative =
+                    baseRelative === "//"
+                      ? "/"
+                      : baseRelative.replace(/\/{2,}/g, "/");
+                }
+
+                if (!visited.has(baseRelative) && !isExcluded(baseRelative)) {
+                  queue.push({ route: baseRelative, depth: -1 });
                 }
               }
-            }),
-          );
-        }
-
-        // ---- Generate llms.txt ----
-        const llmsTitle =
-          options.output.llmsTitle || resolvedConfig?.env?.mode || "Site";
-
-        // Deterministic ordering
-        const items = options.output.sort
-          ? [...captured].sort((a, b) => a.route.localeCompare(b.route))
-          : captured;
-
-        // Group by section, with Optional special handling
-        /** @type {Map<string, typeof items>} */
-        const bySection = new Map();
-        /** @type {typeof items} */
-        const optionalItems = [];
-
-        for (const item of items) {
-          if (item.optional) optionalItems.push(item);
-          else {
-            const s = item.section || "Pages";
-            bySection.set(s, [...(bySection.get(s) || []), item]);
+            }
+          } catch (err) {
+            log.warn(`  ⚠️  failed ${route}: ${err?.message || err}`);
+          } finally {
+            await page.close();
           }
         }
 
-        let llms = `# ${llmsTitle}\n\n> ${options.output.llmsSummary}\n\n`;
+        try {
+          // BFS: process queue in batches
+          while (queue.length && captured.length < maxPages) {
+            const batch = queue.splice(0, concurrency).map((item) => {
+              const depth = item.depth >= 0 ? item.depth : 1;
+              return { route: item.route, depth };
+            });
 
-        for (const [section, sectionItems] of bySection.entries()) {
-          llms += `## ${section}\n\n`;
-          for (const it of sectionItems) {
-            const link = makeLlmsLink(it.mdRelPath);
-            const label = it.title || it.route;
-            const notes = it.notes ? `: ${it.notes}` : "";
-            llms += `- [${label}](${link})${notes}\n`;
+            await Promise.all(
+              batch.map(async ({ route, depth }) => {
+                if (options.crawl?.enabled && depth > maxDepth) return;
+                await captureOne(route);
+
+                if (options.crawl?.enabled) {
+                  for (let i = 0; i < queue.length; i++) {
+                    if (queue[i].depth === -1) queue[i].depth = depth + 1;
+                  }
+                }
+              }),
+            );
           }
-          llms += `\n`;
+        } finally {
+          await browser.close();
+          await safeCloseHttpServer(previewServer.httpServer);
         }
-
-        if (optionalItems.length) {
-          llms += `## Optional\n\n`;
-          for (const it of optionalItems) {
-            const link = makeLlmsLink(it.mdRelPath);
-            const label = it.title || it.route;
-            const notes = it.notes ? `: ${it.notes}` : "";
-            llms += `- [${label}](${link})${notes}\n`;
-          }
-          llms += `\n`;
-        }
-
-        const llmsPath = path.join(distDir, options.output.llmsTxtFileName);
-        await fs.writeFile(llmsPath, llms, "utf8");
-
-        log.info(
-          `\nLLM Spider: wrote ${captured.length} markdown pages + ${options.output.llmsTxtFileName}\n`,
-        );
-      } finally {
-        await browser.close();
-        await safeCloseHttpServer(previewServer.httpServer);
       }
+
+      // ---- Generate llms.txt ----
+      const llmsTitle =
+        options.output.llmsTitle || resolvedConfig?.env?.mode || "Site";
+
+      // Deterministic ordering
+      const items = options.output.sort
+        ? [...captured].sort((a, b) => a.route.localeCompare(b.route))
+        : captured;
+
+      // Group by section
+      /** @type {Map<string, typeof items>} */
+      const bySection = new Map();
+      /** @type {typeof items} */
+      const optionalItems = [];
+
+      for (const item of items) {
+        if (item.optional) optionalItems.push(item);
+        else {
+          const s = item.section || "Pages";
+          bySection.set(s, [...(bySection.get(s) || []), item]);
+        }
+      }
+
+      let llms = `# ${llmsTitle}\n\n> ${options.output.llmsSummary}\n\n`;
+
+      for (const [section, sectionItems] of bySection.entries()) {
+        llms += `## ${section}\n\n`;
+        for (const it of sectionItems) {
+          const link = makeLlmsLink(it.mdRelPath);
+          const label = it.title || it.route;
+          const notes = it.notes ? `: ${it.notes}` : "";
+          llms += `- [${label}](${link})${notes}\n`;
+        }
+        llms += `\n`;
+      }
+
+      if (optionalItems.length) {
+        llms += `## Optional\n\n`;
+        for (const it of optionalItems) {
+          const link = makeLlmsLink(it.mdRelPath);
+          const label = it.title || it.route;
+          const notes = it.notes ? `: ${it.notes}` : "";
+          llms += `- [${label}](${link})${notes}\n`;
+        }
+        llms += `\n`;
+      }
+
+      const llmsPath = path.join(distDir, options.output.llmsTxtFileName);
+      await fs.writeFile(llmsPath, llms, "utf8");
+
+      log.info(
+        `\nLLM Spider: wrote ${captured.length} markdown pages + ${options.output.llmsTxtFileName}\n`,
+      );
     },
   };
 }

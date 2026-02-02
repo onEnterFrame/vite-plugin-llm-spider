@@ -84,6 +84,13 @@ export interface OutputOptions {
 export interface LlmSpiderOptions {
   /** Enable/disable plugin (default: true) */
   enabled?: boolean
+  /**
+   * Static mode: read HTML files directly from dist/ without browser.
+   * - true: always use static mode (no Puppeteer needed)
+   * - false: always use browser rendering (required for SPAs)
+   * - 'auto' (default): use static when crawl is disabled, browser when crawl is enabled
+   */
+  static?: boolean | 'auto'
   /** Explicit route list (recommended) */
   routes?: RouteDef[]
   /** Crawl mode options (off by default) */

@@ -82,6 +82,29 @@ The generated `llms.txt` follows the [llmstxt.org](https://llmstxt.org/) spec:
 
 ## Configuration
 
+### Static Mode (No Browser Required)
+
+By default, when crawl is disabled, the plugin reads HTML files directly from your `dist/` folder — **no Puppeteer or browser needed**. This works great for:
+
+- Pre-rendered/SSG sites
+- CI environments without Chrome (WSL, Docker, etc.)
+- Simple static sites
+
+```js
+llmSpider({
+  static: true,  // Force static mode (default: "auto")
+  routes: [
+    { path: "/", title: "Home" },
+    { path: "/about", title: "About" },
+  ],
+})
+```
+
+Options:
+- `true` — Always read HTML files directly (no browser)
+- `false` — Always use Puppeteer (required for SPAs that need JS rendering)
+- `"auto"` (default) — Use static when crawl is disabled, browser when crawl is enabled
+
 ### Route Definitions
 
 ```js
@@ -217,6 +240,7 @@ render: {
 - Add more `removeSelectors`
 
 ### CI fails to launch browser
+- **Easiest fix:** Use `static: true` if you don't need JS rendering
 - Add `--no-sandbox` to launch args
 - Ensure Puppeteer dependencies are installed
 
