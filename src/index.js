@@ -369,6 +369,15 @@ export default function llmSpiderPlugin(userOptions = {}) {
           const html = await page.content();
           const $ = cheerio.load(html);
 
+          // Harvest links BEFORE removing nav elements (for crawl mode)
+          let harvestedHrefs = [];
+          if (options.crawl?.enabled) {
+            harvestedHrefs = $("a[href]")
+              .map((_, a) => $(a).attr("href"))
+              .get();
+            log.debug(`  Found ${harvestedHrefs.length} links on ${route}:`, harvestedHrefs.slice(0, 15));
+          }
+
           // Remove noisy elements (CSS selectors)
           for (const sel of options.extract.removeSelectors || [])
             $(sel).remove();
@@ -425,13 +434,9 @@ export default function llmSpiderPlugin(userOptions = {}) {
 
           log.info(`  ✅ ${route} -> ${mdRelPath}`);
 
-          // Harvest links (crawl mode only)
+          // Harvest links (crawl mode only) - using pre-harvested links from before cleanup
           if (options.crawl?.enabled) {
-            const hrefs = $("a[href]")
-              .map((_, a) => $(a).attr("href"))
-              .get();
-
-            for (const href of hrefs) {
+            for (const href of harvestedHrefs) {
               const n = normalizeRoute(href, {
                 stripQuery: options.crawl.stripQuery,
               });
