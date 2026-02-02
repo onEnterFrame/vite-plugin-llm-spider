@@ -1,6 +1,6 @@
 {
   "name": "@happyalienai/vite-plugin-llm-spider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Vite plugin that generates LLM-friendly Markdown snapshots and llms.txt for SPAs",
   "type": "module",
   "main": "./dist/index.cjs",

@@ -1,10 +1,20 @@
 # vite-plugin-llm-spider
 
+> Make your Vite SPA discoverable by AI search engines like ChatGPT, Perplexity, and Google AI Overviews
+
+**Single Page Apps are invisible to AI.** While tools like ChatGPT, Claude, and Perplexity reshape how people find information, SPAs remain hidden behind JavaScript walls. This plugin bridges that gap by generating clean, LLM-friendly markdown snapshots and a standardized index.
+
+- 🤖 **Zero-click optimization** — Get cited in AI answers without complex SSR
+- 📈 **LLM SEO / GEO ready** — Clean markdown format that LLMs prefer
+- 🎯 **[llms.txt standard](https://llmstxt.org/)** — Machine-readable index for AI agents
+
 > **Built by [Happy Alien AI](https://happyalien.ai)** — We take the busy work out of training development.
 
-A Vite build plugin that generates **LLM-friendly Markdown snapshots** of selected public routes and publishes a curated index at **`/llms.txt`**.
+## Why This Matters
 
-Makes SPAs and content-heavy Vite apps easier for AI agents/tools to understand by providing clean, low-noise text renditions plus a deterministic index.
+Traditional SEO optimizes for Google's crawler. **Generative Engine Optimization (GEO)** optimizes for AI systems that synthesize answers from your content. When someone asks ChatGPT or Perplexity a question your site answers, you want to be cited.
+
+SPAs render content via JavaScript — invisible to most AI crawlers. This plugin runs Puppeteer at build time to capture your rendered pages as clean markdown, plus generates an `llms.txt` index that tells AI agents exactly where to look.
 
 ## Features
 
@@ -221,5 +231,5 @@ MIT
     <strong>Happy Alien AI</strong>
   </a>
   <br>
-  AI-powered tools for instructional designers and eLearning teams
+  We take the busy work out of training development.
 </p>
