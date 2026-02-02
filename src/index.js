@@ -19,7 +19,20 @@ export default function llmSpiderPlugin(userOptions = {}) {
   /** @type {import('vite').ResolvedConfig | undefined} */
   let resolvedConfig;
 
-  const options = {
+  // Deep merge helper
+  function deepMerge(target, source) {
+    const result = { ...target };
+    for (const key of Object.keys(source)) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key]) && !(source[key] instanceof RegExp)) {
+        result[key] = deepMerge(target[key] || {}, source[key]);
+      } else {
+        result[key] = source[key];
+      }
+    }
+    return result;
+  }
+
+  const defaults = {
     enabled: true,
 
     // Recommended: explicit list
@@ -104,8 +117,9 @@ export default function llmSpiderPlugin(userOptions = {}) {
     },
 
     logLevel: "info", // "silent" | "info" | "debug"
-    ...userOptions,
   };
+
+  const options = deepMerge(defaults, userOptions);
 
   const log = {
     info: (...args) =>
@@ -208,7 +222,7 @@ export default function llmSpiderPlugin(userOptions = {}) {
       if (!resolvedConfig)
         throw new Error("LLM Spider: missing resolved Vite config");
 
-      const distDir = resolvedConfig.build.outDir;
+      const distDir = resolvedConfig.build.outDir || "dist";
       const basePath = (resolvedConfig.base || "/").replace(/\\/g, "/");
 
       // ---- Resolve route list ----
@@ -240,10 +254,23 @@ export default function llmSpiderPlugin(userOptions = {}) {
         root: resolvedConfig.root,
         base: resolvedConfig.base,
         build: { outDir: distDir },
-        preview: { port: 0, open: false },
+        preview: { port: 0, open: false, host: '127.0.0.1' },
         configFile: false,
         plugins: [], // avoid loading user plugins again
         logLevel: "silent",
+      });
+
+      // Wait for server to be fully listening
+      await new Promise((resolve, reject) => {
+        const server = previewServer.httpServer;
+        if (server.listening) {
+          resolve();
+        } else {
+          server.once('listening', resolve);
+          server.once('error', reject);
+          // Timeout after 5s
+          setTimeout(() => reject(new Error('Preview server failed to start')), 5000);
+        }
       });
 
       const addr = previewServer.httpServer.address();
@@ -256,6 +283,8 @@ export default function llmSpiderPlugin(userOptions = {}) {
       // Example: http://127.0.0.1:4173/app/  (if base="/app/")
       const normalizedBase = basePath.endsWith("/") ? basePath : basePath + "/";
       const baseUrl = `http://127.0.0.1:${addr.port}${normalizedBase}`;
+      
+      log.debug("Preview server at:", baseUrl);
 
       const browser = await puppeteer.launch(options.render.launchOptions);
       const turndown = new TurndownService(options.markdown.turndown);
