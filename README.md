@@ -17,7 +17,7 @@ Makes SPAs and content-heavy Vite apps easier for AI agents/tools to understand 
 ## Installation
 
 ```bash
-npm i -D vite-plugin-llm-spider puppeteer
+npm i -D @happyalienai/vite-plugin-llm-spider
 ```
 
 ## Quick Start
@@ -25,7 +25,7 @@ npm i -D vite-plugin-llm-spider puppeteer
 ```js
 // vite.config.js
 import { defineConfig } from "vite";
-import llmSpider from "vite-plugin-llm-spider";
+import llmSpider from "@happyalienai/vite-plugin-llm-spider";
 
 export default defineConfig({
   plugins: [

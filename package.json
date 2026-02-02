@@ -1,5 +1,5 @@
 {
-  "name": "vite-plugin-llm-spider",
+  "name": "@happyalienai/vite-plugin-llm-spider",
   "version": "0.1.0",
   "description": "Vite plugin that generates LLM-friendly Markdown snapshots and llms.txt for SPAs",
   "type": "module",
@@ -43,12 +43,15 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AskHappyAlien/vite-plugin-llm-spider.git"
+    "url": "git+https://github.com/onEnterFrame/vite-plugin-llm-spider.git"
   },
   "bugs": {
-    "url": "https://github.com/AskHappyAlien/vite-plugin-llm-spider/issues"
+    "url": "https://github.com/onEnterFrame/vite-plugin-llm-spider/issues"
   },
-  "homepage": "https://github.com/AskHappyAlien/vite-plugin-llm-spider#readme",
+  "homepage": "https://github.com/onEnterFrame/vite-plugin-llm-spider#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "peerDependencies": {
     "vite": "^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
   },
