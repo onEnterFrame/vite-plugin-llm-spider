@@ -1,0 +1,46 @@
+{
+  "name": "vite-plugin-llm-spider",
+  "version": "0.1.0",
+  "description": "Vite plugin that generates LLM-friendly Markdown snapshots and llms.txt for SPAs",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": [
+    "vite",
+    "vite-plugin",
+    "llm",
+    "llms.txt",
+    "markdown",
+    "ai",
+    "seo",
+    "spider",
+    "crawler"
+  ],
+  "author": "Happy Alien AI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onEnterFrame/vite-plugin-llm-spider.git"
+  },
+  "bugs": {
+    "url": "https://github.com/onEnterFrame/vite-plugin-llm-spider/issues"
+  },
+  "homepage": "https://github.com/onEnterFrame/vite-plugin-llm-spider#readme",
+  "peerDependencies": {
+    "vite": "^5.0.0 || ^6.0.0"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "puppeteer": "^24.0.0",
+    "turndown": "^7.2.0",
+    "turndown-plugin-gfm": "^1.0.2"
+  }
+}
