@@ -32,6 +32,8 @@ npm i -D @happyalienai/vite-plugin-llm-spider
 
 ## Quick Start
 
+The plugin auto-discovers your pages by crawling from the root — no configuration needed:
+
 ```js
 // vite.config.js
 import { defineConfig } from "vite";
@@ -39,27 +41,30 @@ import llmSpider from "@happyalienai/vite-plugin-llm-spider";
 
 export default defineConfig({
   plugins: [
-    llmSpider({
-      routes: [
-        { path: "/", title: "Home", section: "Product" },
-        { path: "/pricing", title: "Pricing", section: "Product" },
-        { path: "/docs/", title: "Docs", section: "Docs", optional: true },
-      ],
-      exclude: ["/login", "/admin", "/account"],
-      render: {
-        waitForSelector: "main",
-      },
-    }),
+    llmSpider(),  // That's it! Crawl is enabled by default
   ],
 });
 ```
 
 After `npm run build`, you'll get:
 
-- `dist/llms.txt` — curated index
-- `dist/index.html.md` — home page
-- `dist/pricing.md` — pricing page  
-- `dist/docs/index.html.md` — docs page
+- `dist/llms.txt` — auto-generated index of all discovered pages
+- `dist/*.md` — markdown snapshot for each page
+
+### Customize defaults
+
+```js
+llmSpider({
+  exclude: ["/login", "/admin", "/account"],  // Skip sensitive pages
+  crawl: {
+    maxDepth: 3,    // How deep to follow links (default: 2)
+    maxPages: 100,  // Max pages to capture (default: 50)
+  },
+  render: {
+    waitForSelector: "main",  // Wait for content before extracting
+  },
+})
+```
 
 ## Output Format
 
@@ -84,19 +89,16 @@ The generated `llms.txt` follows the [llmstxt.org](https://llmstxt.org/) spec:
 
 ### Static Mode (No Browser Required)
 
-By default, when crawl is disabled, the plugin reads HTML files directly from your `dist/` folder — **no Puppeteer or browser needed**. This works great for:
-
-- Pre-rendered/SSG sites
-- CI environments without Chrome (WSL, Docker, etc.)
-- Simple static sites
+For pre-rendered/SSG sites, you can skip Puppeteer entirely and read HTML files directly:
 
 ```js
 llmSpider({
-  static: true,  // Force static mode (default: "auto")
-  routes: [
+  static: true,  // Read from dist/ without browser
+  routes: [      // Required when using static mode
     { path: "/", title: "Home" },
     { path: "/about", title: "About" },
   ],
+  crawl: { enabled: false },
 })
 ```
 
@@ -105,30 +107,42 @@ Options:
 - `false` — Always use Puppeteer (required for SPAs that need JS rendering)
 - `"auto"` (default) — Use static when crawl is disabled, browser when crawl is enabled
 
-### Route Definitions
+Static mode is ideal for CI environments without Chrome (WSL, Docker, etc.).
+
+### Explicit Routes (Advanced)
+
+For precise control over which pages to include (disables crawl):
 
 ```js
-routes: [
-  {
-    path: "/pricing",      // URL path (required)
-    title: "Pricing",      // Display title in llms.txt
-    section: "Product",    // H2 section grouping
-    optional: false,       // If true, goes under "## Optional"
-    notes: "Updated weekly" // Appended to link in llms.txt
-  }
-]
+llmSpider({
+  routes: [
+    {
+      path: "/pricing",      // URL path (required)
+      title: "Pricing",      // Display title in llms.txt
+      section: "Product",    // H2 section grouping
+      optional: false,       // If true, goes under "## Optional"
+      notes: "Updated weekly" // Appended to link in llms.txt
+    }
+  ],
+  crawl: { enabled: false },  // Disable crawl when using explicit routes
+})
 ```
 
-### Crawl Mode (opt-in)
+Use explicit routes when you want curated control over your llms.txt index rather than auto-discovery.
+
+### Crawl Options
+
+Crawl is enabled by default. Customize the behavior:
 
 ```js
 llmSpider({
   crawl: {
-    enabled: true,
-    seeds: ["/"],
-    maxDepth: 2,
-    maxPages: 50,
-    concurrency: 3,
+    enabled: true,       // Disable with `false` if using explicit routes
+    seeds: ["/"],        // Starting URLs
+    maxDepth: 2,         // Link depth from seeds
+    maxPages: 50,        // Cap on total pages
+    concurrency: 3,      // Parallel page loads
+    stripQuery: true,    // Ignore ?query params
   },
   exclude: ["/login", "/admin"],
 })

@@ -52,9 +52,9 @@ export default function llmSpiderPlugin(userOptions = {}) {
     // Recommended: explicit list
     routes: /** @type {RouteDef[] | undefined} */ (undefined),
 
-    // Optional crawl mode (off by default)
+    // Crawl mode (enabled by default - auto-discovers pages from seeds)
     crawl: {
-      enabled: false,
+      enabled: true,
       seeds: ["/"],
       maxDepth: 2,
       maxPages: 50,

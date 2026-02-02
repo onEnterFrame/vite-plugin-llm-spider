@@ -71,9 +71,9 @@ function llmSpiderPlugin(userOptions = {}) {
       /** @type {RouteDef[] | undefined} */
       void 0
     ),
-    // Optional crawl mode (off by default)
+    // Crawl mode (enabled by default - auto-discovers pages from seeds)
     crawl: {
-      enabled: false,
+      enabled: true,
       seeds: ["/"],
       maxDepth: 2,
       maxPages: 50,
